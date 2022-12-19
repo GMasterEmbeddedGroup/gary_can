@@ -23,7 +23,8 @@ find_package(rclcpp REQUIRED)
 # find_package(<dependency> REQUIRED)
 
 add_library(${PROJECT_NAME} SHARED
-        src/socket_can_sender.cpp)
+        src/socket_can_sender.cpp
+        src/socket_can_receiver.cpp)
 
 target_include_directories(${PROJECT_NAME} PUBLIC include)
 
