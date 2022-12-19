@@ -17,9 +17,20 @@ endif()
 
 # find dependencies
 find_package(ament_cmake REQUIRED)
+find_package(rclcpp REQUIRED)
 # uncomment the following section in order to fill in
 # further dependencies manually.
 # find_package(<dependency> REQUIRED)
+
+add_library(${PROJECT_NAME} SHARED
+        src/socket_can_sender.cpp)
+
+target_include_directories(${PROJECT_NAME} PUBLIC include)
+
+ament_target_dependencies(
+        ${PROJECT_NAME}
+        rclcpp)
+
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
@@ -31,5 +42,20 @@ if(BUILD_TESTING)
   #set(ament_cmake_cpplint_FOUND TRUE)
   ament_lint_auto_find_test_dependencies()
 endif()
+
+
+# Install
+install(DIRECTORY include/
+        DESTINATION include)
+
+install(TARGETS ${PROJECT_NAME}
+        ARCHIVE DESTINATION lib
+        LIBRARY DESTINATION lib
+        RUNTIME DESTINATION bin)
+
+ament_export_include_directories(include)
+ament_export_libraries(${PROJECT_NAME})
+
+ament_export_dependencies(rclcpp)
 
 ament_package()
