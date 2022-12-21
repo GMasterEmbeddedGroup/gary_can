@@ -24,29 +24,45 @@ SocketCANSender::SocketCANSender(const std::string &ifname) {
                  this->_ifname.c_str());
     struct ifreq _ifreq{};
     strcpy(_ifreq.ifr_name, this->_ifname.c_str());
-    ioctl(this->_socket, SIOCGIFINDEX, &_ifreq);
+    if (int ret = ioctl(_socket, SIOCGIFINDEX, &_ifreq) != 0) {
+        RCLCPP_ERROR(rclcpp::get_logger("socket_can_sender"),
+                     "[interface %s errno %d ret %d] failed to select interface", this->_ifname.c_str(), ret);
+        this->is_opened = false;
+        return;
+    }
 
     //bind
     RCLCPP_DEBUG(rclcpp::get_logger("socket_can_sender"), "[interface %s] binding", this->_ifname.c_str());
     struct sockaddr_can _sockaddr_can{};
     _sockaddr_can.can_family = AF_CAN;
     _sockaddr_can.can_ifindex = _ifreq.ifr_ifindex;
-    if (::bind(this->_socket, (struct sockaddr *) &_sockaddr_can, sizeof(_sockaddr_can)) != 0) {
-        RCLCPP_ERROR(rclcpp::get_logger("socket_can_sender"), "[interface %s errno %d] failed to bind to interface",
-                     this->_ifname.c_str(), errno);
+    if (int ret = ::bind(_socket, (struct sockaddr *) &_sockaddr_can, sizeof(_sockaddr_can)) != 0) {
+        RCLCPP_ERROR(rclcpp::get_logger("socket_can_sender"),
+                     "[interface %s errno %d ret %d] failed to bind to interface", this->_ifname.c_str(), errno, ret);
         this->is_opened = false;
         return;
     }
 
-    //set nonblocking mode
+    //nonblocking mode
     RCLCPP_DEBUG(rclcpp::get_logger("socket_can_sender"), "[interface %s] setting nonblocking mode",
                  this->_ifname.c_str());
-    int flags = fcntl(this->_socket, F_GETFL, 0);
-    fcntl(this->_socket, F_SETFL, flags | O_NONBLOCK);
+    int flags = fcntl(_socket, F_GETFL, 0);
+    if (int ret = fcntl(_socket, F_SETFL, flags | O_NONBLOCK) != 0) {
+        RCLCPP_ERROR(rclcpp::get_logger("socket_can_sender"),
+                     "[interface %s errno %d ret %d] failed to set nonblocking mode",
+                     this->_ifname.c_str(), errno, ret);
+        this->is_opened = false;
+        return;
+    }
 
     //disable can filter
     RCLCPP_DEBUG(rclcpp::get_logger("socket_can_sender"), "[interface %s] disabling can filter", this->_ifname.c_str());
-    setsockopt(this->_socket, SOL_CAN_RAW, CAN_RAW_FILTER, nullptr, 0);
+    if (int ret = setsockopt(this->_socket, SOL_CAN_RAW, CAN_RAW_FILTER, nullptr, 0) != 0) {
+        RCLCPP_ERROR(rclcpp::get_logger("socket_can_sender"),
+                     "[interface %s errno %d ret %d] failed to disable can filter", this->_ifname.c_str(), errno, ret);
+        this->is_opened = false;
+        return;
+    }
 
     this->is_opened = true;
 }
@@ -66,7 +82,7 @@ bool SocketCANSender::send(struct can_frame &tx_frame) {
     //check opened
     if (!this->is_opened) {
         RCLCPP_DEBUG(rclcpp::get_logger("socket_can_sender"), "[interface %s] socket is not opened",
-                    this->_ifname.c_str());
+                     this->_ifname.c_str());
         return false;
     }
 
@@ -80,11 +96,11 @@ bool SocketCANSender::send(struct can_frame &tx_frame) {
         return true;
     } else if (len < 0) {
         RCLCPP_DEBUG(rclcpp::get_logger("socket_can_sender"), "[interface %s return %d errno %d] failed to write",
-                    this->_ifname.c_str(), len, errno);
+                     this->_ifname.c_str(), len, errno);
     } else if (len != sizeof(struct can_frame)) {
         RCLCPP_DEBUG(rclcpp::get_logger("socket_can_sender"),
-                    "[interface %s errno %d] attempt to write %d bytes, %d byte written", this->_ifname.c_str(), errno,
-                    sizeof(struct can_frame), len);
+                     "[interface %s errno %d] attempt to write %d bytes, %d byte written", this->_ifname.c_str(), errno,
+                     sizeof(struct can_frame), len);
     }
     return false;
 }
