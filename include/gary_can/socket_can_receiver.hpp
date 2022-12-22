@@ -11,16 +11,14 @@ namespace can {
 class SocketCANReceiver {
 
 public:
-    explicit SocketCANReceiver(const std::string& ifname);
-
+    explicit SocketCANReceiver(const std::string& _ifname);
     ~SocketCANReceiver();
-
-    bool bind(uint32_t frame_id);
-
+    bool open_socket(uint32_t frame_id);
     bool read(uint32_t frame_id, struct can_frame *frame);
+    std::string ifname;
+    std::map<uint32_t, bool> is_opened;
 
 private:
-    std::string _ifname;
     std::map<uint32_t, int> _sockets;
 };
 

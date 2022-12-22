@@ -11,15 +11,15 @@ namespace can {
 class SocketCANSender {
 
 public:
-    explicit SocketCANSender(const std::string& ifname);
-
+    explicit SocketCANSender(const std::string& _ifname);
     ~SocketCANSender();
-
+    bool open_socket();
+    bool open_socket(const std::string& _ifname);
     bool send(struct can_frame& tx_frame);
+    std::string ifname;
+    bool is_opened;
 
 private:
-    bool is_opened;
-    std::string _ifname;
     int _socket;
 };
 
