@@ -18,9 +18,24 @@ endif()
 # find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(diagnostic_msgs REQUIRED)
 # uncomment the following section in order to fill in
 # further dependencies manually.
 # find_package(<dependency> REQUIRED)
+
+add_executable(socket_can_monitor
+        src/socket_can_monitor.cpp)
+
+target_include_directories(socket_can_monitor PRIVATE include)
+
+target_link_libraries(socket_can_monitor socketcan)
+
+ament_target_dependencies(
+        socket_can_monitor
+        rclcpp
+        diagnostic_msgs
+)
+
 
 add_library(${PROJECT_NAME} SHARED
         src/socket_can_sender.cpp
@@ -46,6 +61,9 @@ endif()
 
 
 # Install
+install(TARGETS socket_can_monitor
+        DESTINATION lib/${PROJECT_NAME})
+
 install(DIRECTORY include/
         DESTINATION include)
 
@@ -57,6 +75,6 @@ install(TARGETS ${PROJECT_NAME}
 ament_export_include_directories(include)
 ament_export_libraries(${PROJECT_NAME})
 
-ament_export_dependencies(rclcpp)
+ament_export_dependencies(rclcpp diagnostic_msgs)
 
 ament_package()
