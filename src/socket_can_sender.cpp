@@ -38,7 +38,7 @@ bool SocketCANSender::open_socket() {
                  this->ifname.c_str());
     struct ifreq _ifreq{};
     strcpy(_ifreq.ifr_name, this->ifname.c_str());
-    if (int ret = ioctl(_socket, SIOCGIFINDEX, &_ifreq) != 0) {
+    if (int ret = ioctl(this->_socket, SIOCGIFINDEX, &_ifreq) != 0) {
         RCLCPP_DEBUG(rclcpp::get_logger("socket_can_sender"),
                      "[%s] failed to select interface, return %d, error: %s",
                      this->ifname.c_str(), ret, std::strerror(errno));
@@ -52,7 +52,7 @@ bool SocketCANSender::open_socket() {
     struct sockaddr_can _sockaddr_can{};
     _sockaddr_can.can_family = AF_CAN;
     _sockaddr_can.can_ifindex = _ifreq.ifr_ifindex;
-    if (int ret = ::bind(_socket, (struct sockaddr *) &_sockaddr_can, sizeof(_sockaddr_can)) != 0) {
+    if (int ret = ::bind(this->_socket, (struct sockaddr *) &_sockaddr_can, sizeof(_sockaddr_can)) != 0) {
         RCLCPP_DEBUG(rclcpp::get_logger("socket_can_sender"),
                      "[%s] failed to bind to interface, return %d, error: %s",
                      this->ifname.c_str(), ret, std::strerror(errno));
@@ -64,8 +64,8 @@ bool SocketCANSender::open_socket() {
     //nonblocking mode
     RCLCPP_DEBUG(rclcpp::get_logger("socket_can_sender"), "[%s] setting nonblocking mode",
                  this->ifname.c_str());
-    int flags = fcntl(_socket, F_GETFL, 0);
-    if (int ret = fcntl(_socket, F_SETFL, flags | O_NONBLOCK) != 0) {
+    int flags = fcntl(this->_socket, F_GETFL, 0);
+    if (int ret = fcntl(this->_socket, F_SETFL, flags | O_NONBLOCK) != 0) {
         RCLCPP_DEBUG(rclcpp::get_logger("socket_can_sender"),
                      "[%s] failed to set nonblocking mode, return %d, error: %s",
                      this->ifname.c_str(), ret, std::strerror(errno));

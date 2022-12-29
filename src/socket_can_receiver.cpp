@@ -71,7 +71,6 @@ bool SocketCANReceiver::open_socket(uint32_t frame_id) {
                  this->ifname.c_str(), frame_id);
     struct can_filter _can_filter[1];
     _can_filter[0].can_id = frame_id;
-    _can_filter[0].can_mask = 0xffff;
     _can_filter[0].can_mask = CAN_SFF_MASK;
     if (int ret = setsockopt(_socket, SOL_CAN_RAW, CAN_RAW_FILTER, &_can_filter, sizeof(_can_filter)) != 0) {
         RCLCPP_ERROR(rclcpp::get_logger("socket_can_receiver"),
