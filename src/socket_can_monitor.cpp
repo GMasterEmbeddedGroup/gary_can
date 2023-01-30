@@ -4,6 +4,7 @@
 #include <linux/can/raw.h>
 #include <linux/can.h>
 #include <net/if.h>
+#include <fcntl.h>
 #include <unistd.h>
 #include <chrono>
 #include <libsocketcan.h>
@@ -76,7 +77,7 @@ void SocketCANMonitor::loop() {
     if (len == sizeof(struct can_frame)) {
         //succ
         this->ifindex_recv_cnt[src_addr.can_ifindex]++;
-        RCLCPP_DEBUG(this->get_logger(), "read succ, index %d", src_addr.can_ifindex);
+//        RCLCPP_DEBUG(this->get_logger(), "read succ, index %d", src_addr.can_ifindex);
     } else {
         //fail
         close(this->_socket);
@@ -117,6 +118,17 @@ void SocketCANMonitor::open_socket() {
         return;
     }
 
+    //nonblocking mode
+    RCLCPP_DEBUG(this->get_logger(), "setting nonblocking mode");
+    int flags = fcntl(_socket, F_GETFL, 0);
+    if (int ret = fcntl(_socket, F_SETFL, flags | O_NONBLOCK) != 0) {
+        RCLCPP_DEBUG(this->get_logger(), "failed to set nonblocking mode, return %d, error: %s",
+                     ret, std::strerror(errno));
+        this->is_opened = false;
+        close(this->_socket);
+        return;
+    }
+
     RCLCPP_DEBUG(this->get_logger(), "create socket successful");
     this->is_opened = true;
 }
@@ -143,12 +155,10 @@ void SocketCANMonitor::monitor() {
 
         diagnostic_msgs::msg::DiagnosticStatus diagnostic_status;
 
-        //calc delta packet
-        uint64_t delta_pkt = i.second - this->last_ifindex_recv_cnt[i.first];
-
         //get ifname
         char ifname[64]{0};
         if_indextoname(i.first, ifname);
+        //ifindex does not exist
         if (ifname[0] == '\0') continue;
 
         diagnostic_status.hardware_id = ifname;
@@ -173,32 +183,63 @@ void SocketCANMonitor::monitor() {
             RCLCPP_WARN_THROTTLE(this->get_logger(), clock, 1000, "[%s] failed to get bitrate", ifname);
             diagnostic_status.level = diagnostic_msgs::msg::DiagnosticStatus::WARN;
             diagnostic_status.message = "failed to get bitrate";
-        } else {
-            //get bitrate succ
-            //get timer period
-            int64_t period;
-            if (rcl_timer_get_period(this->timer->get_timer_handle().get(), &period) == RCL_RET_OK) {
-
-            }
-            //to freq
-            double freq = 1.0f / (static_cast<double>(period) / 1000'000'000);
-
-            //calc load rate
-            int packet_len = 110;
-            double load = (static_cast<double>(delta_pkt) * packet_len) / (bittiming.bitrate / freq);
-
-            //check if overloaded
-            if (load > 0.8) {
-                diagnostic_status.level = diagnostic_msgs::msg::DiagnosticStatus::WARN;
-                diagnostic_status.message = "can bus overload";
-            } else {
-                diagnostic_status.level = diagnostic_msgs::msg::DiagnosticStatus::OK;
-                diagnostic_status.message = "ok";
-            }
-            RCLCPP_DEBUG(this->get_logger(), "[%s] ifindex %d, delta pkt %ld, bitrate %d, load %f", ifname, i.first,
-                         delta_pkt, bittiming.bitrate, load);
+            diagnostic_array.status.emplace_back(diagnostic_status);
+            continue;
         }
+
+        //get timer period
+        int64_t period;
+        if (rcl_timer_get_period(this->timer->get_timer_handle().get(), &period) != RCL_RET_OK) {
+            auto clock = rclcpp::Clock();
+            RCLCPP_WARN_THROTTLE(this->get_logger(), clock, 1000, "[%s] failed to get timer period", ifname);
+            diagnostic_status.level = diagnostic_msgs::msg::DiagnosticStatus::WARN;
+            diagnostic_status.message = "failed to get timer period";
+            diagnostic_array.status.emplace_back(diagnostic_status);
+            continue;
+        }
+        //to freq
+        double freq = 1.0f / (static_cast<double>(period) / 1000'000'000);
+
+        //calc delta packet
+        uint64_t delta_pkt = i.second - this->last_ifindex_recv_cnt[i.first];
+        //calc load rate
+        int packet_len = 110;
+        double load = (static_cast<double>(delta_pkt) * packet_len) / (bittiming.bitrate / freq);
+
+        diagnostic_msgs::msg::KeyValue bus_load;
+        bus_load.key = "bus_load";
+        bus_load.value = std::to_string(load);
+        diagnostic_status.values.emplace_back(bus_load);
+
+        //check if overloaded
+        if (load > 0.8) {
+            diagnostic_status.level = diagnostic_msgs::msg::DiagnosticStatus::WARN;
+            diagnostic_status.message = "can bus overload";
+            diagnostic_array.status.emplace_back(diagnostic_status);
+            auto clock = rclcpp::Clock();
+            RCLCPP_WARN_THROTTLE(this->get_logger(), clock, 1000, "[%s] can bus overload %f", ifname, load);
+            continue;
+        }
+
+
+        int state;
+        can_get_state(ifname, &state);
+        if (state > CAN_STATE_ERROR_ACTIVE) {
+            diagnostic_status.level = diagnostic_msgs::msg::DiagnosticStatus::WARN;
+            diagnostic_status.message = "transmission jammed";
+            diagnostic_array.status.emplace_back(diagnostic_status);
+            auto clock = rclcpp::Clock();
+            RCLCPP_WARN_THROTTLE(this->get_logger(), clock, 1000, "[%s] transmission jammed, state %d", ifname, state);
+            continue;
+        }
+
+        //no error detected
+        diagnostic_status.level = diagnostic_msgs::msg::DiagnosticStatus::OK;
+        diagnostic_status.message = "ok";
         diagnostic_array.status.emplace_back(diagnostic_status);
+
+        RCLCPP_DEBUG(this->get_logger(), "[%s] ifindex %d, delta pkt %ld, bitrate %d, load %f state %d", ifname, i.first,
+                     delta_pkt, bittiming.bitrate, load, state);
     }
 
     //foreach offline can interface
