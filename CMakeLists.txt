@@ -18,6 +18,9 @@ endif()
 # find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(rclcpp_components REQUIRED)
+find_package(rclcpp_lifecycle REQUIRED)
+find_package(lifecycle_msgs REQUIRED)
 find_package(diagnostic_msgs REQUIRED)
 # uncomment the following section in order to fill in
 # further dependencies manually.
@@ -34,7 +37,28 @@ ament_target_dependencies(
         socket_can_monitor
         rclcpp
         diagnostic_msgs
+        lifecycle_msgs
+        rclcpp_lifecycle
+        rclcpp_components
 )
+
+add_library(socket_can_monitor_lib SHARED
+      src/socket_can_monitor.cpp)
+
+target_include_directories(socket_can_monitor_lib PRIVATE include)
+
+target_link_libraries(socket_can_monitor_lib socketcan)
+
+ament_target_dependencies(
+        socket_can_monitor_lib
+        rclcpp
+        diagnostic_msgs
+        lifecycle_msgs
+        rclcpp_lifecycle
+        rclcpp_components
+)
+
+rclcpp_components_register_nodes(socket_can_monitor_lib "driver::can::SocketCANMonitor")
 
 
 add_library(${PROJECT_NAME} SHARED
@@ -67,7 +91,7 @@ install(TARGETS socket_can_monitor
 install(DIRECTORY include/
         DESTINATION include)
 
-install(TARGETS ${PROJECT_NAME}
+install(TARGETS ${PROJECT_NAME} socket_can_monitor_lib
         ARCHIVE DESTINATION lib
         LIBRARY DESTINATION lib
         RUNTIME DESTINATION bin)
