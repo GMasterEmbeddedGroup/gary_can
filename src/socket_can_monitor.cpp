@@ -8,101 +8,173 @@
 #include <unistd.h>
 #include <chrono>
 #include <libsocketcan.h>
-
+#include <sys/ioctl.h>
+#include <regex>
+#include <fstream>
 
 using namespace std::chrono_literals;
 using namespace driver::can;
 
 
-SocketCANMonitor::SocketCANMonitor() : rclcpp::Node("socket_can_monitor") {
-    //create publisher
-    this->diagnostic_publisher = this->create_publisher<diagnostic_msgs::msg::DiagnosticArray>("/diagnostics",
-                                                                                               rclcpp::SystemDefaultsQoS());
+SocketCANMonitor::SocketCANMonitor(const rclcpp::NodeOptions &options) : rclcpp_lifecycle::LifecycleNode(
+        "socket_can_monitor", options) {
+
+    this->declare_parameter("diagnose_topic", "/diagnostics");
+    this->declare_parameter("update_freq", 10.0f);
+    this->declare_parameter("monitored_can_bus", rclcpp::ParameterValue(std::vector<std::string>()));
+
+    this->update_freq = 10.0f;
+}
+
+CallbackReturn SocketCANMonitor::on_configure(const rclcpp_lifecycle::State &previous_state) {
+
+    //check and create publisher
+    if (this->get_parameter("diagnose_topic").get_type() != rclcpp::PARAMETER_STRING) {
+        RCLCPP_ERROR(this->get_logger(), "diagnose_topic type must be string");
+        return CallbackReturn::FAILURE;
+    }
+    this->diagnose_topic = this->get_parameter("diagnose_topic").as_string();
+    this->diagnostic_publisher = this->create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
+            this->diagnose_topic, rclcpp::SystemDefaultsQoS());
+
+    //get update_freq
+    if (this->get_parameter("update_freq").get_type() != rclcpp::PARAMETER_DOUBLE) {
+        RCLCPP_ERROR(this->get_logger(), "update_freq type must be double");
+        return CallbackReturn::FAILURE;
+    }
+    this->update_freq = this->get_parameter("update_freq").as_double();
+
+    //get monitored_can_bus
+    if (this->get_parameter("monitored_can_bus").get_type() != rclcpp::PARAMETER_STRING_ARRAY) {
+        RCLCPP_ERROR(this->get_logger(), "monitored_can_bus type must be string array");
+        return CallbackReturn::FAILURE;
+    }
+    this->monitored_can_bus = this->get_parameter("monitored_can_bus").as_string_array();
+    if (this->monitored_can_bus.empty()) RCLCPP_WARN(this->get_logger(), "no can bus is monitored");
+
+    RCLCPP_INFO(this->get_logger(), "configured");
+
+    return CallbackReturn::SUCCESS;
+}
+
+CallbackReturn SocketCANMonitor::on_cleanup(const rclcpp_lifecycle::State &previous_state) {
+
+    //delete publisher
+    this->diagnostic_publisher.reset();
+
+    RCLCPP_INFO(this->get_logger(), "cleaning up");
+
+    return CallbackReturn::SUCCESS;
+}
+
+CallbackReturn SocketCANMonitor::on_activate(const rclcpp_lifecycle::State &previous_state) {
 
     //create timer
-    this->timer = this->create_wall_timer(100ms, [this] { monitor(); });
+    this->timer_update = this->create_wall_timer(1000ms / this->update_freq, [this] { update(); });
+    //activate publisher
+    this->diagnostic_publisher->on_activate();
 
-    this->_socket = 0;
-    this->is_opened = false;
-}
-
-
-void SocketCANMonitor::loop() {
-
-    //reopen socket if closed
-    if (!this->is_opened) {
-        this->open_socket();
-        return;
+    //create socket
+    for (const auto &i: this->monitored_can_bus) {
+        this->open_socket(i);
     }
 
-    //set time out
-    struct timeval tv{};
-    tv.tv_sec = 0;
-    tv.tv_usec = 100000;    //100ms
+    RCLCPP_INFO(this->get_logger(), "activated");
 
-    //set fd
-    fd_set rd_fd{};
-    FD_ZERO(&rd_fd);
-    FD_SET(this->_socket, &rd_fd);
+    return CallbackReturn::SUCCESS;
+}
 
-    //select
-    int ret = select(this->_socket + 1, &rd_fd, nullptr, nullptr, &tv);
+CallbackReturn SocketCANMonitor::on_deactivate(const rclcpp_lifecycle::State &previous_state) {
 
-    if (ret < 0) {
-        //select error
-        if (errno == EINTR) {
-            //if received interrupt signal
-            return;
-        } else {
-            //other error
-            RCLCPP_DEBUG(this->get_logger(), "failed to select, socket %d, return %d, error: %s",
-                         this->_socket, ret, std::strerror(errno));
-            close(this->_socket);
-            this->is_opened = false;
-            return;
+    //delete timer
+    this->timer_update.reset();
+    //deactivate publisher
+    this->diagnostic_publisher->on_deactivate();
+
+    RCLCPP_INFO(this->get_logger(), "deactivated");
+
+    return CallbackReturn::SUCCESS;
+}
+
+CallbackReturn SocketCANMonitor::on_shutdown(const rclcpp_lifecycle::State &previous_state) {
+
+    if (this->diagnostic_publisher.get() != nullptr) this->diagnostic_publisher.reset();
+    if (this->timer_update.get() != nullptr) this->timer_update.reset();
+
+    RCLCPP_INFO(this->get_logger(), "shutdown");
+    return CallbackReturn::SUCCESS;
+}
+
+CallbackReturn SocketCANMonitor::on_error(const rclcpp_lifecycle::State &previous_state) {
+
+    if (this->diagnostic_publisher.get() != nullptr) this->diagnostic_publisher.reset();
+    if (this->timer_update.get() != nullptr) this->timer_update.reset();
+
+    RCLCPP_INFO(this->get_logger(), "error");
+    return CallbackReturn::SUCCESS;
+}
+
+std::vector<struct can_recv_info_t> SocketCANMonitor::update_rcvlist(const std::string &path) {
+    std::ifstream infile;
+    std::string str;
+    std::regex base_regex(R"(^ +(.+?) +([\d\w]+) +([\d\w]+) +([\d\w]+) +([\d\w]+) +([\d\w]+) +([\d\w]+))");
+    std::smatch base_match;
+    std::vector<struct can_recv_info_t> rcvlist;
+    struct can_recv_info_t can_recv_info;
+
+    RCLCPP_DEBUG(this->get_logger(), "reading rcvlist %s", path.c_str());
+
+    infile.open(path);
+
+    while (true) {
+        if (infile.eof()) break;
+
+        std::getline(infile, str);
+
+        if (std::regex_match(str, base_match, base_regex)) {
+
+            //skip title
+            if (base_match[1].str() == "device") continue;
+
+            can_recv_info.device = base_match[1].str();
+            can_recv_info.can_id = std::stoi(base_match[2].str());
+            can_recv_info.matches = std::stoi(base_match[6].str());
+            rcvlist.emplace_back(can_recv_info);
         }
-    } else if (ret == 0) {
-        //select time out
-        RCLCPP_DEBUG(this->get_logger(), "select timeout");
-        return;
     }
+    infile.close();
 
-    struct sockaddr_can src_addr{};
-    socklen_t addrlen;
-    struct can_frame frame{};
+    RCLCPP_DEBUG(this->get_logger(), "total item %d", rcvlist.size());
 
-    //try to read
-    long len = recvfrom(this->_socket, &frame, sizeof(struct can_frame), 0, (struct sockaddr *) &src_addr,
-                        &addrlen);
-    if (len == sizeof(struct can_frame)) {
-        //succ
-        this->ifindex_recv_cnt[src_addr.can_ifindex]++;
-//        RCLCPP_DEBUG(this->get_logger(), "read succ, index %d", src_addr.can_ifindex);
-    } else {
-        //fail
-        close(this->_socket);
-        this->is_opened = false;
-        RCLCPP_DEBUG(this->get_logger(), "read fail, return %d, error: %s", len, std::strerror(errno));
-    }
+    return rcvlist;
 }
 
-
-void SocketCANMonitor::open_socket() {
+bool SocketCANMonitor::open_socket(const std::string &ifname) {
     //create new socket
     RCLCPP_DEBUG(this->get_logger(), "creating socket");
-    this->_socket = socket(PF_CAN, SOCK_RAW, CAN_RAW);
+    int _socket = socket(PF_CAN, SOCK_RAW, CAN_RAW);
+
+    //select interface
+    RCLCPP_DEBUG(this->get_logger(), "[%s] setting interface index", ifname.c_str());
+    struct ifreq _ifreq{};
+    strcpy(_ifreq.ifr_name, ifname.c_str());
+    if (int ret = ioctl(_socket, SIOCGIFINDEX, &_ifreq) != 0) {
+        RCLCPP_DEBUG(this->get_logger(), "[%s] failed to select interface, return %d, error: %s",
+                     ifname.c_str(), ret, std::strerror(errno));
+        close(_socket);
+        return false;
+    }
 
     //bind
     RCLCPP_DEBUG(this->get_logger(), "binding");
     struct sockaddr_can _sockaddr_can{};
     _sockaddr_can.can_family = AF_CAN;
-    _sockaddr_can.can_ifindex = 0;
-    if (int ret = ::bind(this->_socket, (struct sockaddr *) &_sockaddr_can, sizeof(_sockaddr_can)) != 0) {
+    _sockaddr_can.can_ifindex = _ifreq.ifr_ifindex;
+    if (int ret = ::bind(_socket, (struct sockaddr *) &_sockaddr_can, sizeof(_sockaddr_can)) != 0) {
         RCLCPP_DEBUG(this->get_logger(), "failed to bind to interface, return %d, error: %s",
                      ret, std::strerror(errno));
-        this->is_opened = false;
-        close(this->_socket);
-        return;
+        close(_socket);
+        return false;
     }
 
     //set filter
@@ -110,12 +182,11 @@ void SocketCANMonitor::open_socket() {
     struct can_filter _can_filter[1];
     _can_filter[0].can_id = 0;
     _can_filter[0].can_mask = 0;
-    if (int ret = setsockopt(this->_socket, SOL_CAN_RAW, CAN_RAW_FILTER, &_can_filter, sizeof(_can_filter)) != 0) {
+    if (int ret = setsockopt(_socket, SOL_CAN_RAW, CAN_RAW_FILTER, &_can_filter, sizeof(_can_filter)) != 0) {
         RCLCPP_DEBUG(this->get_logger(), "failed to set can filter, return %d, error: %s",
                      ret, std::strerror(errno));
-        this->is_opened = false;
-        close(this->_socket);
-        return;
+        close(_socket);
+        return false;
     }
 
     //nonblocking mode
@@ -124,137 +195,120 @@ void SocketCANMonitor::open_socket() {
     if (int ret = fcntl(_socket, F_SETFL, flags | O_NONBLOCK) != 0) {
         RCLCPP_DEBUG(this->get_logger(), "failed to set nonblocking mode, return %d, error: %s",
                      ret, std::strerror(errno));
-        this->is_opened = false;
-        close(this->_socket);
-        return;
+        close(_socket);
+        return false;
     }
 
     RCLCPP_DEBUG(this->get_logger(), "create socket successful");
-    this->is_opened = true;
+    return true;
 }
 
+void SocketCANMonitor::update() {
 
-void SocketCANMonitor::monitor() {
-    //diagnostic message
-    diagnostic_msgs::msg::DiagnosticArray diagnostic_array;
+    RCLCPP_DEBUG(this->get_logger(), "update");
 
-    //get all interface info
-    struct if_nameindex *name_index = if_nameindex();
-    std::map<std::string, uint32_t> if_info;
-    for (int i = 0; i < 10; ++i) {
-        if (name_index[i].if_index == 0) break;
-        if_info.emplace(std::string(name_index[i].if_name), name_index[i].if_index);
-    }
-    if_freenameindex(name_index);
+    this->diagnostic_array.status.clear();
 
-    //copy all monitored ifname
-    auto if_names = this->known_if_names;
+    this->rcvlist_all = this->update_rcvlist("/proc/net/can/rcvlist_all");
+    this->rcvlist_fil = this->update_rcvlist("/proc/net/can/rcvlist_fil");
 
     //foreach all ifindex
-    for (const auto &i: this->ifindex_recv_cnt) {
+    for (const auto &i: this->monitored_can_bus) {
 
         diagnostic_msgs::msg::DiagnosticStatus diagnostic_status;
+        diagnostic_status.hardware_id = i;
+        diagnostic_status.name = i;
 
-        //get ifname
-        char ifname[64]{0};
-        if_indextoname(i.first, ifname);
-        //ifindex does not exist
-        if (ifname[0] == '\0') continue;
+        //check existence and get delta pkt
+        int delta_pkt = 0;
+        bool found = false;
+        for (const auto &j: this->rcvlist_all) {
+            if (j.device == i) {
+                delta_pkt = j.matches - this->last_recv_cnt[i];
+                found = true;
+                this->last_recv_cnt[i] = j.matches;
+            }
+        }
+        if (!found) {
+            this->last_recv_cnt[i] = 0;
+            //reopen socket
+            this->open_socket(i);
 
-        diagnostic_status.hardware_id = ifname;
-        diagnostic_status.name = ifname;
-
-        //check new if
-        auto pos = std::find(if_names.begin(), if_names.end(), std::string(ifname));
-        if (pos == if_names.end()) {
-            //new if
-            RCLCPP_INFO(this->get_logger(), "adding new can interface %s", ifname);
-            this->known_if_names.emplace_back(ifname);
-        } else {
-            //existing if
-            if_names.erase(pos);
+            diagnostic_status.level = diagnostic_msgs::msg::DiagnosticStatus::ERROR;
+            diagnostic_status.message = "offline";
+            diagnostic_array.status.emplace_back(diagnostic_status);
+            auto clock = rclcpp::Clock();
+            RCLCPP_ERROR_THROTTLE(this->get_logger(), clock, 1000, "[%s] offline", i.c_str());
+            continue;
         }
 
+        //check if transmission jammed
+        int state;
+        can_get_state(i.c_str(), &state);
+        if (state > CAN_STATE_ERROR_ACTIVE) {
+            diagnostic_status.level = diagnostic_msgs::msg::DiagnosticStatus::WARN;
+            diagnostic_status.message = "transmission jammed";
+            diagnostic_array.status.emplace_back(diagnostic_status);
+            auto clock = rclcpp::Clock();
+            RCLCPP_WARN_THROTTLE(this->get_logger(), clock, 1000, "[%s] transmission jammed, state %d", i.c_str(),
+                                 state);
+            continue;
+        }
+
+        //check if overloaded
         //get bitrate
         struct can_bittiming bittiming{};
-        if (can_get_bittiming(ifname, &bittiming) != 0) {
+        if (can_get_bittiming(i.c_str(), &bittiming) != 0) {
             //get bitrate failed
             auto clock = rclcpp::Clock();
-            RCLCPP_WARN_THROTTLE(this->get_logger(), clock, 1000, "[%s] failed to get bitrate", ifname);
+            RCLCPP_WARN_THROTTLE(this->get_logger(), clock, 1000, "[%s] failed to get bitrate", i.c_str());
             diagnostic_status.level = diagnostic_msgs::msg::DiagnosticStatus::WARN;
             diagnostic_status.message = "failed to get bitrate";
             diagnostic_array.status.emplace_back(diagnostic_status);
             continue;
         }
 
-        //get timer period
-        int64_t period;
-        if (rcl_timer_get_period(this->timer->get_timer_handle().get(), &period) != RCL_RET_OK) {
-            auto clock = rclcpp::Clock();
-            RCLCPP_WARN_THROTTLE(this->get_logger(), clock, 1000, "[%s] failed to get timer period", ifname);
-            diagnostic_status.level = diagnostic_msgs::msg::DiagnosticStatus::WARN;
-            diagnostic_status.message = "failed to get timer period";
-            diagnostic_array.status.emplace_back(diagnostic_status);
-            continue;
-        }
-        //to freq
-        double freq = 1.0f / (static_cast<double>(period) / 1000'000'000);
-
-        //calc delta packet
-        uint64_t delta_pkt = i.second - this->last_ifindex_recv_cnt[i.first];
         //calc load rate
         int packet_len = 110;
-        double load = (static_cast<double>(delta_pkt) * packet_len) / (bittiming.bitrate / freq);
+        double load = (static_cast<double>(delta_pkt) * packet_len) / (bittiming.bitrate / this->update_freq);
 
-        diagnostic_msgs::msg::KeyValue bus_load;
-        bus_load.key = "bus_load";
-        bus_load.value = std::to_string(load);
-        diagnostic_status.values.emplace_back(bus_load);
-
-        //check if overloaded
+        //check
         if (load > 0.8) {
             diagnostic_status.level = diagnostic_msgs::msg::DiagnosticStatus::WARN;
             diagnostic_status.message = "can bus overload";
             diagnostic_array.status.emplace_back(diagnostic_status);
             auto clock = rclcpp::Clock();
-            RCLCPP_WARN_THROTTLE(this->get_logger(), clock, 1000, "[%s] can bus overload %f", ifname, load);
-            continue;
-        }
-
-
-        int state;
-        can_get_state(ifname, &state);
-        if (state > CAN_STATE_ERROR_ACTIVE) {
-            diagnostic_status.level = diagnostic_msgs::msg::DiagnosticStatus::WARN;
-            diagnostic_status.message = "transmission jammed";
-            diagnostic_array.status.emplace_back(diagnostic_status);
-            auto clock = rclcpp::Clock();
-            RCLCPP_WARN_THROTTLE(this->get_logger(), clock, 1000, "[%s] transmission jammed, state %d", ifname, state);
+            RCLCPP_WARN_THROTTLE(this->get_logger(), clock, 1000, "[%s] can bus overload %f", i.c_str(), load);
             continue;
         }
 
         //no error detected
         diagnostic_status.level = diagnostic_msgs::msg::DiagnosticStatus::OK;
         diagnostic_status.message = "ok";
+
+        RCLCPP_DEBUG(this->get_logger(), "[%s] delta pkt %ld, bitrate %d, load %f state %d", i.c_str(), delta_pkt,
+                                     bittiming.bitrate, load, state);
+
+        //report load rate
+        diagnostic_msgs::msg::KeyValue bus_load;
+        bus_load.key = "bus_load";
+        bus_load.value = std::to_string(load);
+        diagnostic_status.values.emplace_back(bus_load);
+
+        //report filter
+        for (const auto& j : this->rcvlist_fil) {
+            if (j.device == i) {
+                diagnostic_msgs::msg::KeyValue filter_cnt;
+                delta_pkt = j.matches - this->last_filter_cnt[i][j.can_id];
+                this->last_filter_cnt[i][j.can_id] = j.matches;
+                filter_cnt.key = "id_" + std::to_string(j.can_id) + "_freq";
+                filter_cnt.value = std::to_string(delta_pkt * this->update_freq);
+                diagnostic_status.values.emplace_back(filter_cnt);
+            }
+        }
+
         diagnostic_array.status.emplace_back(diagnostic_status);
-
-        RCLCPP_DEBUG(this->get_logger(), "[%s] ifindex %d, delta pkt %ld, bitrate %d, load %f state %d", ifname, i.first,
-                     delta_pkt, bittiming.bitrate, load, state);
     }
-
-    //foreach offline can interface
-    for (const auto &i: if_names) {
-        diagnostic_msgs::msg::DiagnosticStatus diagnostic_status;
-        diagnostic_status.hardware_id = i;
-        diagnostic_status.name = i;
-        diagnostic_status.level = diagnostic_msgs::msg::DiagnosticStatus::ERROR;
-        diagnostic_status.message = "offline";
-        diagnostic_array.status.emplace_back(diagnostic_status);
-        auto clock = rclcpp::Clock();
-        RCLCPP_ERROR_THROTTLE(this->get_logger(), clock, 1000, "[%s] offline", i.c_str());
-    }
-
-    this->last_ifindex_recv_cnt = this->ifindex_recv_cnt;
 
     //publish
     diagnostic_array.header.frame_id = "";
@@ -265,14 +319,17 @@ void SocketCANMonitor::monitor() {
 int main(int argc, char const *const argv[]) {
     rclcpp::init(argc, argv);
 
-    auto socket_can_monitor = std::make_shared<SocketCANMonitor>();
+    rclcpp::executors::SingleThreadedExecutor exe;
 
-    while (rclcpp::ok()) {
-        try {
-            socket_can_monitor->loop();
-            rclcpp::spin_some(socket_can_monitor);
-        } catch (const rclcpp::exceptions::RCLError &e) {}
-    }
+    std::shared_ptr<SocketCANMonitor> socket_can_monitor = std::make_shared<SocketCANMonitor>(rclcpp::NodeOptions());
+
+    exe.add_node(socket_can_monitor->get_node_base_interface());
+
+    exe.spin();
 
     rclcpp::shutdown();
 }
+
+#include "rclcpp_components/register_node_macro.hpp"
+
+RCLCPP_COMPONENTS_REGISTER_NODE(driver::can::SocketCANMonitor)
