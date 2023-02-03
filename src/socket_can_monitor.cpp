@@ -27,6 +27,7 @@ SocketCANMonitor::SocketCANMonitor(const rclcpp::NodeOptions &options) : rclcpp_
 }
 
 CallbackReturn SocketCANMonitor::on_configure(const rclcpp_lifecycle::State &previous_state) {
+    RCL_UNUSED(previous_state);
 
     //check and create publisher
     if (this->get_parameter("diagnose_topic").get_type() != rclcpp::PARAMETER_STRING) {
@@ -58,6 +59,7 @@ CallbackReturn SocketCANMonitor::on_configure(const rclcpp_lifecycle::State &pre
 }
 
 CallbackReturn SocketCANMonitor::on_cleanup(const rclcpp_lifecycle::State &previous_state) {
+    RCL_UNUSED(previous_state);
 
     //delete publisher
     this->diagnostic_publisher.reset();
@@ -68,6 +70,7 @@ CallbackReturn SocketCANMonitor::on_cleanup(const rclcpp_lifecycle::State &previ
 }
 
 CallbackReturn SocketCANMonitor::on_activate(const rclcpp_lifecycle::State &previous_state) {
+    RCL_UNUSED(previous_state);
 
     //create timer
     this->timer_update = this->create_wall_timer(1000ms / this->update_freq, [this] { update(); });
@@ -85,6 +88,7 @@ CallbackReturn SocketCANMonitor::on_activate(const rclcpp_lifecycle::State &prev
 }
 
 CallbackReturn SocketCANMonitor::on_deactivate(const rclcpp_lifecycle::State &previous_state) {
+    RCL_UNUSED(previous_state);
 
     //delete timer
     this->timer_update.reset();
@@ -97,6 +101,7 @@ CallbackReturn SocketCANMonitor::on_deactivate(const rclcpp_lifecycle::State &pr
 }
 
 CallbackReturn SocketCANMonitor::on_shutdown(const rclcpp_lifecycle::State &previous_state) {
+    RCL_UNUSED(previous_state);
 
     if (this->diagnostic_publisher.get() != nullptr) this->diagnostic_publisher.reset();
     if (this->timer_update.get() != nullptr) this->timer_update.reset();
@@ -106,6 +111,7 @@ CallbackReturn SocketCANMonitor::on_shutdown(const rclcpp_lifecycle::State &prev
 }
 
 CallbackReturn SocketCANMonitor::on_error(const rclcpp_lifecycle::State &previous_state) {
+    RCL_UNUSED(previous_state);
 
     if (this->diagnostic_publisher.get() != nullptr) this->diagnostic_publisher.reset();
     if (this->timer_update.get() != nullptr) this->timer_update.reset();
