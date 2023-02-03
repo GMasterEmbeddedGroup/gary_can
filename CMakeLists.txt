@@ -99,6 +99,12 @@ install(TARGETS ${PROJECT_NAME} socket_can_monitor_lib
 ament_export_include_directories(include)
 ament_export_libraries(${PROJECT_NAME})
 
-ament_export_dependencies(rclcpp diagnostic_msgs)
+ament_export_dependencies(
+        rclcpp
+        diagnostic_msgs
+        lifecycle_msgs
+        rclcpp_lifecycle
+        rclcpp_components
+)
 
 ament_package()
