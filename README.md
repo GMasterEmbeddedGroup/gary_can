@@ -127,7 +127,7 @@ ros2 run gary_can socket_can_monitor
 作为component加载
 ```bash
 ros2 run rclcpp_components component_container
-ros2 component load /ComponentManager gary_can driver::can::SocketCANMonitor
+ros2 component load /ComponentManager gary_can gary_can::SocketCANMonitor
 ```
 
 注意, `SocketCANMonitor`是生命周期节点, 当节点启动后, 需要配置才能进入运行状态
