@@ -13,7 +13,7 @@
 #include <fstream>
 
 using namespace std::chrono_literals;
-using namespace driver::can;
+using namespace gary_can;
 
 
 SocketCANMonitor::SocketCANMonitor(const rclcpp::NodeOptions &options) : rclcpp_lifecycle::LifecycleNode(
@@ -338,4 +338,4 @@ int main(int argc, char const *const argv[]) {
 
 #include "rclcpp_components/register_node_macro.hpp"
 
-RCLCPP_COMPONENTS_REGISTER_NODE(driver::can::SocketCANMonitor)
+RCLCPP_COMPONENTS_REGISTER_NODE(gary_can::SocketCANMonitor)

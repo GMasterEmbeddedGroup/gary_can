@@ -6,8 +6,7 @@
 
 using CallbackReturn = rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn;
 
-namespace driver {
-namespace can {
+namespace gary_can {
 
 struct can_recv_info_t {
     std::string device;
@@ -54,5 +53,4 @@ class SocketCANMonitor : public rclcpp_lifecycle::LifecycleNode {
         std::map<std::string, int> last_recv_cnt;
         std::map<std::string, std::map<int, int>> last_filter_cnt;
     };
-}
 }

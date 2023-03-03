@@ -58,7 +58,7 @@ ament_target_dependencies(
         rclcpp_components
 )
 
-rclcpp_components_register_nodes(socket_can_monitor_lib "driver::can::SocketCANMonitor")
+rclcpp_components_register_nodes(socket_can_monitor_lib "gary_can::SocketCANMonitor")
 
 
 add_library(${PROJECT_NAME} SHARED
