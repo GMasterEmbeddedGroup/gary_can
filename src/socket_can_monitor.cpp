@@ -213,8 +213,10 @@ void SocketCANMonitor::update() {
 
     RCLCPP_DEBUG(this->get_logger(), "update");
 
-    this->diagnostic_array.status.clear();
+    //monitored nothing
+    if (this->monitored_can_bus.empty()) return;
 
+    this->diagnostic_array.status.clear();
     this->rcvlist_all = this->update_rcvlist("/proc/net/can/rcvlist_all");
     this->rcvlist_fil = this->update_rcvlist("/proc/net/can/rcvlist_fil");
 
