@@ -37,6 +37,7 @@ class SocketCANMonitor : public rclcpp_lifecycle::LifecycleNode {
         std::string diagnose_topic;
         double update_freq;
         std::vector<std::string> monitored_can_bus;
+        double overload_threshold;
 
         //publisher
         rclcpp_lifecycle::LifecyclePublisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr diagnostic_publisher;

@@ -22,8 +22,10 @@ SocketCANMonitor::SocketCANMonitor(const rclcpp::NodeOptions &options) : rclcpp_
     this->declare_parameter("diagnose_topic", "/diagnostics");
     this->declare_parameter("update_freq", 10.0f);
     this->declare_parameter("monitored_can_bus", rclcpp::ParameterValue(std::vector<std::string>()));
+    this->declare_parameter("overload_threshold", 0.8f);
 
     this->update_freq = 10.0f;
+    this->overload_threshold = 0.8f;
 }
 
 CallbackReturn SocketCANMonitor::on_configure(const rclcpp_lifecycle::State &previous_state) {
@@ -52,6 +54,13 @@ CallbackReturn SocketCANMonitor::on_configure(const rclcpp_lifecycle::State &pre
     }
     this->monitored_can_bus = this->get_parameter("monitored_can_bus").as_string_array();
     if (this->monitored_can_bus.empty()) RCLCPP_WARN(this->get_logger(), "no can bus is monitored");
+
+    //get overload_threshold
+    if (this->get_parameter("overload_threshold").get_type() != rclcpp::PARAMETER_DOUBLE) {
+        RCLCPP_ERROR(this->get_logger(), "overload_threshold type must be double");
+        return CallbackReturn::FAILURE;
+    }
+    this->overload_threshold = this->get_parameter("overload_threshold").as_double();
 
     RCLCPP_INFO(this->get_logger(), "configured");
 
@@ -281,7 +290,7 @@ void SocketCANMonitor::update() {
         double load = (static_cast<double>(delta_pkt) * packet_len) / (bittiming.bitrate / this->update_freq);
 
         //check
-        if (load > 0.8) {
+        if (load > this->overload_threshold) {
             diagnostic_status.level = diagnostic_msgs::msg::DiagnosticStatus::WARN;
             diagnostic_status.message = "can bus overload";
             diagnostic_array.status.emplace_back(diagnostic_status);
