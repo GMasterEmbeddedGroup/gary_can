@@ -141,3 +141,4 @@ ros2 lifecycle set /socket_can_monitor activate
 * diagnose_topic: 发送的自检数据主题名称, 默认/diagnostics
 * update_freq: 更新频率, 默认10Hz
 * monitored_can_bus: 需要监控的can总线名称, 默认为空
+* overload_threshold: can过载阈值, 默认为0.8
