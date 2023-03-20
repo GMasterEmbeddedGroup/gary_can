@@ -52,6 +52,7 @@ class SocketCANMonitor : public rclcpp_lifecycle::LifecycleNode {
         std::vector<struct can_recv_info_t> rcvlist_fil;
 
         std::map<std::string, int> last_recv_cnt;
+        std::map<std::string, bool> offline_flag;
         std::map<std::string, std::map<int, int>> last_filter_cnt;
     };
 }
