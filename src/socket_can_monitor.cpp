@@ -31,6 +31,9 @@ SocketCANMonitor::SocketCANMonitor(const rclcpp::NodeOptions &options) : rclcpp_
 CallbackReturn SocketCANMonitor::on_configure(const rclcpp_lifecycle::State &previous_state) {
     RCL_UNUSED(previous_state);
 
+    //create callback group
+    this->cb_group = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+
     //create publisher
     this->diagnose_topic = this->get_parameter("diagnose_topic").as_string();
     this->diagnostic_publisher = this->create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
@@ -66,7 +69,7 @@ CallbackReturn SocketCANMonitor::on_activate(const rclcpp_lifecycle::State &prev
     RCL_UNUSED(previous_state);
 
     //create timer
-    this->timer_update = this->create_wall_timer(1000ms / this->update_freq, [this] { update(); });
+    this->timer_update = this->create_wall_timer(1000ms / this->update_freq, [this] { update(); }, this->cb_group);
     //activate publisher
     this->diagnostic_publisher->on_activate();
 

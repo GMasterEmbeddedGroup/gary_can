@@ -33,6 +33,9 @@ class SocketCANMonitor : public rclcpp_lifecycle::LifecycleNode {
 
         void update();
 
+        //callback group
+        rclcpp::CallbackGroup::SharedPtr cb_group;
+
         //params
         std::string diagnose_topic;
         double update_freq;
