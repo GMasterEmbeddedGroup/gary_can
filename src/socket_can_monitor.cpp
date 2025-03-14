@@ -31,35 +31,22 @@ SocketCANMonitor::SocketCANMonitor(const rclcpp::NodeOptions &options) : rclcpp_
 CallbackReturn SocketCANMonitor::on_configure(const rclcpp_lifecycle::State &previous_state) {
     RCL_UNUSED(previous_state);
 
-    //check and create publisher
-    if (this->get_parameter("diagnose_topic").get_type() != rclcpp::PARAMETER_STRING) {
-        RCLCPP_ERROR(this->get_logger(), "diagnose_topic type must be string");
-        return CallbackReturn::FAILURE;
-    }
+    //create callback group
+    this->cb_group = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+
+    //create publisher
     this->diagnose_topic = this->get_parameter("diagnose_topic").as_string();
     this->diagnostic_publisher = this->create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
             this->diagnose_topic, rclcpp::SystemDefaultsQoS());
 
     //get update_freq
-    if (this->get_parameter("update_freq").get_type() != rclcpp::PARAMETER_DOUBLE) {
-        RCLCPP_ERROR(this->get_logger(), "update_freq type must be double");
-        return CallbackReturn::FAILURE;
-    }
     this->update_freq = this->get_parameter("update_freq").as_double();
 
     //get monitored_can_bus
-    if (this->get_parameter("monitored_can_bus").get_type() != rclcpp::PARAMETER_STRING_ARRAY) {
-        RCLCPP_ERROR(this->get_logger(), "monitored_can_bus type must be string array");
-        return CallbackReturn::FAILURE;
-    }
     this->monitored_can_bus = this->get_parameter("monitored_can_bus").as_string_array();
     if (this->monitored_can_bus.empty()) RCLCPP_WARN(this->get_logger(), "no can bus is monitored");
 
     //get overload_threshold
-    if (this->get_parameter("overload_threshold").get_type() != rclcpp::PARAMETER_DOUBLE) {
-        RCLCPP_ERROR(this->get_logger(), "overload_threshold type must be double");
-        return CallbackReturn::FAILURE;
-    }
     this->overload_threshold = this->get_parameter("overload_threshold").as_double();
 
     RCLCPP_INFO(this->get_logger(), "configured");
@@ -82,7 +69,7 @@ CallbackReturn SocketCANMonitor::on_activate(const rclcpp_lifecycle::State &prev
     RCL_UNUSED(previous_state);
 
     //create timer
-    this->timer_update = this->create_wall_timer(1000ms / this->update_freq, [this] { update(); });
+    this->timer_update = this->create_wall_timer(1000ms / this->update_freq, [this] { update(); }, this->cb_group);
     //activate publisher
     this->diagnostic_publisher->on_activate();
 
@@ -254,10 +241,12 @@ void SocketCANMonitor::update() {
             diagnostic_status.level = diagnostic_msgs::msg::DiagnosticStatus::ERROR;
             diagnostic_status.message = "offline";
             diagnostic_array.status.emplace_back(diagnostic_status);
-            auto clock = rclcpp::Clock();
-            RCLCPP_ERROR_THROTTLE(this->get_logger(), clock, 1000, "[%s] offline", i.c_str());
+            if (!this->offline_flag[i]) RCLCPP_ERROR(this->get_logger(), "[%s] can bus offline", i.c_str());
+            this->offline_flag[i] = true;
             continue;
         }
+        if (this->offline_flag[i]) RCLCPP_ERROR(this->get_logger(), "[%s] can bus online", i.c_str());
+        this->offline_flag[i] = false;
 
         //check if transmission jammed
         int state;
